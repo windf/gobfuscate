@@ -1,156 +1,40 @@
 package main
 
 import (
-	"crypto/rand"
 	"flag"
 	"fmt"
-	"go/build"
-	"io/ioutil"
 	"log"
 	"os"
-	"os/exec"
 	"strings"
 )
 
-// Command line arguments.
-var (
-	encKey              string
-	outputGopath        bool
-	keepTests           bool
-	winHide             bool
-	noStaticLink        bool
-	preservePackageName bool
-	verbose             bool
-)
-
 func main() {
-	flag.StringVar(&encKey, "enckey", "", "rename encryption key")
-	flag.BoolVar(&outputGopath, "outdir", false, "output a full GOPATH")
-	flag.BoolVar(&keepTests, "keeptests", false, "keep _test.go files")
-	flag.BoolVar(&winHide, "winhide", false, "hide windows GUI")
-	flag.BoolVar(&noStaticLink, "nostatic", false, "do not statically link")
-	flag.BoolVar(&preservePackageName, "noencrypt", false,
-		"no encrypted package name for go build command (works when main package has CGO code)")
-	flag.BoolVar(&verbose, "verbose", false, "verbose mode")
-
 	flag.Parse()
 
-	if len(flag.Args()) != 2 {
-		fmt.Fprintln(os.Stderr, "Usage: gobfuscate [flags] pkg_name out_path")
+	if len(flag.Args()) != 1 {
+		fmt.Fprintln(os.Stderr, "Usage: gobfuscate [flags] out_path")
 		flag.PrintDefaults()
 		os.Exit(1)
 	}
 
-	pkgName := flag.Args()[0]
-	outPath := flag.Args()[1]
+	//pkgName := flag.Args()[0]
+	outPath := flag.Args()[0]
 
-	if encKey == "" {
-		buf := make([]byte, 32)
-		rand.Read(buf)
-		encKey = string(buf)
-	}
-
-	if !obfuscate(pkgName, outPath) {
+	if !obfuscate(outPath) {
 		os.Exit(1)
 	}
+	log.Println("ok")
 }
 
-func obfuscate(pkgName, outPath string) bool {
-	var newGopath string
-	if outputGopath {
-		newGopath = outPath
-		if err := os.Mkdir(newGopath, 0755); err != nil {
-			fmt.Fprintln(os.Stderr, "Failed to create destination:", err)
-			return false
-		}
-	} else {
-		var err error
-		newGopath, err = ioutil.TempDir("", "")
-		if err != nil {
-			fmt.Fprintln(os.Stderr, "Failed to create temp dir:", err)
-			return false
-		}
-		defer os.RemoveAll(newGopath)
-	}
+func obfuscate(outPath string) bool {
 
-	log.Println("Copying GOPATH...")
-
-	if err := CopyGopath(pkgName, newGopath, keepTests); err != nil {
-		fmt.Fprintln(os.Stderr, "Failed to copy into a new GOPATH:", err)
-		return false
-	}
-
-	enc := &Encrypter{Key: encKey}
-	log.Println("Obfuscating package names...")
-	if err := ObfuscatePackageNames(newGopath, enc); err != nil {
-		fmt.Fprintln(os.Stderr, "Failed to obfuscate package names:", err)
-		return false
-	}
-	log.Println("Obfuscating strings...")
-	if err := ObfuscateStrings(newGopath); err != nil {
+	log.Println("Obfuscating files...")
+	if err := ObfuscateStrings(outPath); err != nil {
 		fmt.Fprintln(os.Stderr, "Failed to obfuscate strings:", err)
 		return false
 	}
-	log.Println("Obfuscating symbols...")
-	if err := ObfuscateSymbols(newGopath, enc); err != nil {
-		fmt.Fprintln(os.Stderr, "Failed to obfuscate symbols:", err)
-		return false
-	}
 
-	if outputGopath {
-		return true
-	}
-
-	ctx := build.Default
-
-	newPkg := pkgName
-	if !preservePackageName {
-		newPkg = encryptComponents(pkgName, enc)
-	}
-
-	ldflags := `-ldflags=-s -w`
-	if winHide {
-		ldflags += " -H=windowsgui"
-	}
-	if !noStaticLink {
-		ldflags += ` -extldflags "-static"`
-	}
-
-	goCache := newGopath + "/cache"
-	os.Mkdir(goCache, 0755)
-
-	arguments := []string{"build", ldflags, "-o", outPath, newPkg}
-	environment := []string{
-		"GOROOT=" + ctx.GOROOT,
-		"GOARCH=" + ctx.GOARCH,
-		"GOOS=" + ctx.GOOS,
-		"GOPATH=" + newGopath,
-		"PATH=" + os.Getenv("PATH"),
-		"GOCACHE=" + goCache,
-	}
-
-	cmd := exec.Command("go", arguments...)
-	cmd.Env = environment
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-
-	if verbose {
-		fmt.Println()
-		fmt.Println("[Verbose] Temporary path:", newGopath)
-		fmt.Println("[Verbose] Go build command: go", strings.Join(arguments, " "))
-		fmt.Println("[Verbose] Environment variables:")
-		for _, envLine := range environment {
-			fmt.Println(envLine)
-		}
-		fmt.Println()
-	}
-
-	if err := cmd.Run(); err != nil {
-		fmt.Fprintln(os.Stderr, "Failed to compile:", err)
-		return false
-	}
-
-	return true
+	return  true
 }
 
 func encryptComponents(pkgName string, enc *Encrypter) string {
